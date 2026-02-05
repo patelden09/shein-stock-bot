@@ -3,6 +3,7 @@ import requests
 import os
 import json
 import re
+import random
 from telegram import Bot
 
 # ================= CONFIG =================
@@ -20,29 +21,49 @@ PRODUCT_IDS = [
 
 SIZES = ["XXL", "38"]
 
-CHECK_INTERVAL = 60        # check every 1 minute
-ALERT_COOLDOWN = 900       # alert once every 15 minutes per product
+CHECK_INTERVAL = 60        # base check interval
+ALERT_COOLDOWN = 900       # 15 minutes
 
 # ==========================================
 
 bot = Bot(token=BOT_TOKEN)
 last_alert = {}
 
+SESSION = requests.Session()
+SESSION.headers.update({
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/121.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.shein.com/",
+    "Connection": "keep-alive"
+})
+
 def check_stock(product_id):
     url = f"https://www.shein.com/product-p-{product_id}.html"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "Accept-Language": "en-US,en;q=0.9"
-    }
 
-    r = requests.get(url, headers=headers, timeout=15)
+    r = SESSION.get(url, timeout=20)
     html = r.text
 
-    match = re.search(r'window\.__INIT_STATE__\s*=\s*({.*?});', html, re.S)
-    if not match:
+    # Try multiple patterns (Shein changes often)
+    patterns = [
+        r'window\.__INIT_STATE__\s*=\s*({.*?});',
+        r'window\.__PRELOADED_STATE__\s*=\s*({.*?});'
+    ]
+
+    data = None
+    for pattern in patterns:
+        match = re.search(pattern, html, re.S)
+        if match:
+            data = json.loads(match.group(1))
+            break
+
+    if not data:
         raise Exception("Product data not found")
 
-    data = json.loads(match.group(1))
     skus = (
         data.get("goods", {})
         .get("goodsDetail", {})
@@ -80,7 +101,11 @@ while True:
                 )
                 last_alert[pid] = now
 
+            # random delay between products (VERY IMPORTANT)
+            time.sleep(random.uniform(3, 6))
+
         except Exception as e:
             print(f"Error checking {pid}: {e}")
 
-    time.sleep(CHECK_INTERVAL)
+    # wait before next full cycle
+    time.sleep(CHECK_INTERVAL + random.uniform(10, 25))
